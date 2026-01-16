@@ -1,6 +1,14 @@
 # YouTube Shorts Telegram Bot
 
 <p align="center">
+  <a href="https://t.me/opentgytbot">
+    <img src="https://img.shields.io/badge/Use%20Bot-Open%20Telegram-blue" alt="Use Bot">
+  </a>
+</p>
+
+----
+
+<p align="center">
   <img src="./assets/freedom.png" width="400" height="600">
 </p>
 

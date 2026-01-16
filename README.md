@@ -91,4 +91,18 @@ docker rm youtube-shorts-bot
 - `MAX_VIDEO_SIZE_MB` - Maximum video size in MB (default: 50)
 - `LOG_LEVEL` - Logging level (default: INFO)
 
-**Note:** Due to Telegram's restrictions, files must be under 50MB to be sent.
+## Important Notes
+
+### Telegram Limits
+Due to Telegram's restrictions, files must be under 50MB to be sent.
+
+### YouTube Bot Detection ⚠️
+YouTube aggressively blocks requests from cloud servers and data centers. If you encounter "Sign in to confirm you're not a bot" errors:
+
+| Environment | Works? | Notes |
+|-------------|--------|-------|
+| **Home server / Residential IP** | ✅ Yes | Recommended for self-hosting |
+| **Cloud VPS (AWS, Hetzner, etc.)** | ❌ Often blocked | Data center IPs are flagged |
+| **Raspberry Pi at home** | ✅ Yes | Great low-power option |
+
+**Recommendation:** Run this bot on a home server or any device with a residential internet connection for best results.

@@ -126,18 +126,22 @@ class DownloadQueue:
                 },
             ],
             "writethumbnail": False,
-            # Use iOS client to bypass bot detection (often works without cookies)
+            # Use multiple client fallbacks to bypass bot detection
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["ios", "web"],
+                    # Try these clients in order - web_creator and mweb often work
+                    "player_client": ["web_creator", "mweb", "tv_embedded"],
+                    "player_skip": ["webpage", "configs"],
                 },
             },
             "http_headers": {
                 "User-Agent": (
-                    "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
                 ),
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
+                "Referer": "https://www.youtube.com/",
             },
             "socket_timeout": 30,
             "retries": 10,

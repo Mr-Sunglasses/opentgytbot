@@ -1,5 +1,9 @@
 # YouTube Shorts Telegram Bot
 
+![Static Badge](https://img.shields.io/badge/Use%20Bot-%20Open%20Telegram-%20blue?link=https%3A%2F%2Ft.me%2Fopentgytbot)
+
+----
+
 <p align="center">
   <img src="./assets/freedom.png" width="400" height="600">
 </p>

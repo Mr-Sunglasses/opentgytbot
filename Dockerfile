@@ -8,15 +8,16 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+# Install uv and set PATH in same layer
 ENV PATH="/root/.local/bin:$PATH"
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    /root/.local/bin/uv --version
 
 # Copy dependency files
 COPY pyproject.toml uv.lock ./
 
 # Install dependencies
-RUN uv sync --frozen --no-dev
+RUN /root/.local/bin/uv sync --frozen --no-dev
 
 # Copy application code
 COPY . .
@@ -24,4 +25,4 @@ COPY . .
 # Create downloads directory
 RUN mkdir -p downloads
 
-CMD ["uv", "run", "python", "main.py"]
+CMD ["/root/.local/bin/uv", "run", "python", "main.py"]

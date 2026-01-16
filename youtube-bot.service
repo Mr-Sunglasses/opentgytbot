@@ -1,0 +1,15 @@
+[Unit]
+Description=YouTube Shorts Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=your_username
+WorkingDirectory=/path/to/opentgyt
+Environment="PATH=/path/to/opentgyt/.venv/bin"
+ExecStart=/path/to/opentgyt/.venv/bin/python main.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

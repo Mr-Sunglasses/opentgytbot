@@ -1,5 +1,9 @@
 # YouTube Shorts Telegram Bot
 
+<p align="center">
+  <img src="./assets/freedom.png" width="400" height="600">
+</p>
+
 A Telegram bot that downloads YouTube Shorts with a queue system supporting 5 concurrent downloads.
 
 ## Features
@@ -64,18 +68,6 @@ docker logs -f youtube-shorts-bot
 ```bash
 docker stop youtube-shorts-bot
 docker rm youtube-shorts-bot
-```
-
-2. Create a `.env` file from the example:
-```bash
-cp .env.example .env
-```
-
-3. Get a bot token from [@BotFather](https://t.me/botfather) and update `.env`
-
-4. Run the bot:
-```bash
-uv run python main.py
 ```
 
 ## Usage

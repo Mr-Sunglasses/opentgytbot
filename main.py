@@ -3,7 +3,7 @@ from bot import TelegramBot
 from logger import logger
 
 
-async def main():
+async def main() -> None:
     bot = TelegramBot()
     try:
         await bot.run()

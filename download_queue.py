@@ -1,10 +1,13 @@
 import asyncio
 import os
-from dataclasses import dataclass
-from typing import Optional
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from enum import Enum
+from typing import Any, Callable, Optional
 
-import yt_dlp
+import yt_dlp  # type: ignore[import-untyped]
+
+from config import DOWNLOAD_DIR
 from logger import logger
 
 
@@ -23,6 +26,12 @@ class DownloadTask:
     status: DownloadStatus = DownloadStatus.PENDING
     result_path: Optional[str] = None
     error: Optional[str] = None
+    progress: float = 0.0
+    video_title: Optional[str] = None
+    video_duration: Optional[int] = None
+    estimated_size_mb: Optional[float] = None
+    # Callback for progress updates
+    progress_callback: Optional[Callable[[float, str], None]] = field(default=None, repr=False)
 
 
 class DownloadQueue:
@@ -31,6 +40,7 @@ class DownloadQueue:
         self.max_concurrent = max_concurrent
         self.active_downloads: dict[str, DownloadTask] = {}
         self._workers: list[asyncio.Task] = []
+        self._executor = ThreadPoolExecutor(max_workers=max_concurrent, thread_name_prefix="yt-dlp")
 
     async def add(self, task: DownloadTask) -> None:
         await self.queue.put(task)
@@ -44,6 +54,7 @@ class DownloadQueue:
         for worker in self._workers:
             worker.cancel()
         await asyncio.gather(*self._workers, return_exceptions=True)
+        self._executor.shutdown(wait=False)
         logger.info("Stopped all download workers")
 
     async def _worker(self, worker_id: int) -> None:
@@ -57,8 +68,14 @@ class DownloadQueue:
                 logger.info(f"Worker {worker_id} processing: {task.url}")
 
                 try:
-                    result_path = await self._download_video(task.url)
-                    task.result_path = result_path
+                    # Run blocking download in executor
+                    loop = asyncio.get_event_loop()
+                    result = await loop.run_in_executor(
+                        self._executor, self._download_video_sync, task
+                    )
+                    task.result_path = result["path"]
+                    task.video_title = result.get("title")
+                    task.video_duration = result.get("duration")
                     task.status = DownloadStatus.COMPLETED
                     logger.info(f"Worker {worker_id} completed: {task.url}")
                 except Exception as e:
@@ -73,18 +90,48 @@ class DownloadQueue:
                 logger.info(f"Worker {worker_id} cancelled")
                 break
 
-    async def _download_video(self, url: str) -> str:
-        download_dir = "downloads"
-        os.makedirs(download_dir, exist_ok=True)
+    def _download_video_sync(self, task: DownloadTask) -> dict[str, Any]:
+        """Synchronous download function to run in executor."""
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+        def progress_hook(d: dict[str, Any]) -> None:
+            if d["status"] == "downloading":
+                downloaded = d.get("downloaded_bytes", 0)
+                total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
+                if total > 0:
+                    task.progress = (downloaded / total) * 100
+                    task.estimated_size_mb = total / (1024 * 1024)
 
         ydl_opts = {
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-            "outtmpl": f"{download_dir}/%(title)s.%(ext)s",
-            "quiet": False,
-            "no_warnings": False,
+            # Prefer H.264 (avc1) for maximum compatibility with Telegram
+            # Falls back to best available and converts to mp4
+            "format": (
+                "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/"
+                "bestvideo[vcodec^=avc1]+bestaudio/"
+                "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+                "best[ext=mp4]/best"
+            ),
+            "outtmpl": f"{DOWNLOAD_DIR}/%(title).100s.%(ext)s",
+            "quiet": True,
+            "no_warnings": True,
             "noplaylist": True,
+            "progress_hooks": [progress_hook],
+            # Ensure output is always MP4
+            "merge_output_format": "mp4",
+            # Post-process to ensure compatibility
+            "postprocessors": [
+                {
+                    "key": "FFmpegVideoConvertor",
+                    "preferedformat": "mp4",
+                },
+            ],
+            # Embed metadata
+            "writethumbnail": False,
             "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                ),
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
                 "Referer": "https://www.youtube.com/",
@@ -97,17 +144,32 @@ class DownloadQueue:
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            logger.info(f"Starting download for: {url}")
-            info = ydl.extract_info(url, download=True)
+            logger.info(f"Starting download for: {task.url}")
+            info = ydl.extract_info(task.url, download=True)
             filename = ydl.prepare_filename(info)
 
-            if not os.path.exists(filename) or os.path.getsize(filename) == 0:
-                raise ValueError("Downloaded file is empty or does not exist")
+            # Handle postprocessor changing extension to mp4
+            if not os.path.exists(filename):
+                # Try with .mp4 extension
+                base, _ = os.path.splitext(filename)
+                mp4_filename = f"{base}.mp4"
+                if os.path.exists(mp4_filename):
+                    filename = mp4_filename
+                else:
+                    raise ValueError(f"Downloaded file not found: {filename}")
 
-            logger.info(
-                f"Download complete: {filename} ({os.path.getsize(filename) / (1024 * 1024):.2f}MB)"
-            )
-            return filename
+            if os.path.getsize(filename) == 0:
+                raise ValueError("Downloaded file is empty")
+
+            file_size_mb = os.path.getsize(filename) / (1024 * 1024)
+            logger.info(f"Download complete: {filename} ({file_size_mb:.2f}MB)")
+
+            return {
+                "path": filename,
+                "title": info.get("title", "Unknown"),
+                "duration": info.get("duration"),
+                "uploader": info.get("uploader"),
+            }
 
     def get_queue_size(self) -> int:
         return self.queue.qsize()

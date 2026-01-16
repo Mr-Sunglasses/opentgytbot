@@ -28,6 +28,45 @@ YOUTUBE_PATTERNS = [
 ]
 YOUTUBE_REGEX = re.compile("|".join(YOUTUBE_PATTERNS), re.IGNORECASE)
 
+# Characters that must be escaped in MarkdownV2
+MARKDOWN_V2_SPECIAL_CHARS = r"\_*[]()~`>#+-=|{}.!"
+
+
+def escape_markdown_v2(text: str) -> str:
+    """Escape special characters for Telegram MarkdownV2."""
+    for char in MARKDOWN_V2_SPECIAL_CHARS:
+        text = text.replace(char, f"\\{char}")
+    return text
+
+
+def get_friendly_error(error: str) -> str:
+    """Convert yt-dlp error to user-friendly message."""
+    error_lower = error.lower()
+
+    if "sign in" in error_lower or "bot" in error_lower or "cookies" in error_lower:
+        return "YouTube requires verification. Try a different video."
+    if "private" in error_lower:
+        return "This video is private."
+    if "unavailable" in error_lower or "not available" in error_lower:
+        return "This video is unavailable in your region."
+    if "age" in error_lower or "confirm your age" in error_lower:
+        return "This video is age-restricted."
+    if "copyright" in error_lower:
+        return "This video is blocked due to copyright."
+    if "removed" in error_lower or "deleted" in error_lower:
+        return "This video has been removed."
+    if "live" in error_lower:
+        return "Live streams cannot be downloaded."
+    if "format" in error_lower or "no video" in error_lower:
+        return "No compatible video format found."
+    if "network" in error_lower or "connection" in error_lower:
+        return "Network error. Please try again."
+
+    # Fallback: truncate long errors
+    if len(error) > 100:
+        return "Download failed. The video may be restricted or unavailable."
+    return error
+
 
 class RateLimiter:
     """Simple in-memory rate limiter per user."""
@@ -226,33 +265,27 @@ class TelegramBot:
                     bar = "".join(["🟦" if i < filled else "⬜" for i in range(10)])
                     try:
                         await status_msg.edit_text(
-                            f"📥 Downloading\\.\\.\\.\n\n"
-                            f"{bar} {task.progress:.0f}%",
-                            parse_mode=ParseMode.MARKDOWN_V2,
+                            f"📥 Downloading...\n\n{bar} {task.progress:.0f}%"
                         )
                     except Exception:
                         pass  # Ignore rate limit errors on status updates
 
             elif task.status == DownloadStatus.COMPLETED and task.result_path:
                 try:
-                    await status_msg.edit_text("✅ Download complete\\! Sending file\\.\\.\\.",
-                                               parse_mode=ParseMode.MARKDOWN_V2)
+                    await status_msg.edit_text("✅ Download complete! Sending file...")
                     await self._send_video(status_msg, task)
-                    await status_msg.edit_text("🎉 Video sent successfully\\!",
-                                               parse_mode=ParseMode.MARKDOWN_V2)
+                    await status_msg.edit_text("🎉 Video sent successfully!")
                 except Exception as e:
                     logger.error(f"Error sending video: {e}")
-                    error_msg = str(e).replace("-", "\\-").replace(".", "\\.")
-                    await status_msg.edit_text(f"❌ Error: {error_msg}",
-                                               parse_mode=ParseMode.MARKDOWN_V2)
+                    friendly_error = get_friendly_error(str(e))
+                    await status_msg.edit_text(f"❌ Error: {friendly_error}")
                 finally:
                     self._cleanup_file(task.result_path)
                 break
 
             elif task.status == DownloadStatus.FAILED:
-                error_msg = (task.error or "Unknown error").replace("-", "\\-").replace(".", "\\.")
-                await status_msg.edit_text(f"❌ Download failed: {error_msg}",
-                                           parse_mode=ParseMode.MARKDOWN_V2)
+                friendly_error = get_friendly_error(task.error or "Unknown error")
+                await status_msg.edit_text(f"❌ Download failed: {friendly_error}")
                 break
 
             await asyncio.sleep(1.5)

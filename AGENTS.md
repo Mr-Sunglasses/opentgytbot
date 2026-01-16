@@ -104,9 +104,9 @@ LOG_LEVEL=INFO
 ├── config.py            # Settings class with pydantic-settings
 ├── logger.py            # Logging setup (avoids circular imports)
 ├── pyproject.toml       # Project config, dependencies, tool settings
+├── uv.lock              # Locked dependencies (committed to git)
 ├── .env                 # Environment variables (not in git)
-├── Dockerfile           # Container config (includes ffmpeg)
-├── requirements.txt     # Pip-compatible dependencies
+├── Dockerfile           # Container config (uses uv, includes ffmpeg)
 ├── start.sh             # Shell script to run bot
 ├── youtube-bot.service  # Systemd service file
 └── downloads/           # Temporary download directory (auto-created)
@@ -297,10 +297,14 @@ Logs are written to stdout with format:
 
 ### Docker
 
+The Dockerfile uses `uv` for fast, reproducible builds:
+
 ```bash
 docker build -t youtube-shorts-bot .
 docker run -d --env-file .env youtube-shorts-bot
 ```
+
+**Note:** The Docker image uses `uv sync --frozen` which requires `uv.lock` to be committed.
 
 ### Systemd
 

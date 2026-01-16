@@ -1,5 +1,0 @@
-python-telegram-bot>=21.0
-yt-dlp>=2024.0
-pydantic>=2.0
-pydantic-settings>=2.0
-python-dotenv>=1.0

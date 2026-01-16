@@ -246,6 +246,11 @@ uv add package-name==1.2.3
 - Monitor logs for 403 errors (normal - yt-dlp retries automatically)
 - Files over 50MB cannot be sent (Telegram API limit)
 
+### YouTube Bot Detection ("Sign in to confirm you're not a bot")
+- This error means YouTube is blocking requests
+- The bot uses iOS client emulation to bypass this in most cases
+- If it persists, try a different video or wait and retry later
+
 ### Rate Limiting
 - Users are limited to `RATE_LIMIT_PER_USER` requests per minute
 - Rate limit state is in-memory (resets on bot restart)

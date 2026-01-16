@@ -102,7 +102,7 @@ class DownloadQueue:
                     task.progress = (downloaded / total) * 100
                     task.estimated_size_mb = total / (1024 * 1024)
 
-        ydl_opts = {
+        ydl_opts: dict[str, Any] = {
             # Prefer H.264 (avc1) for maximum compatibility with Telegram
             # Falls back to best available and converts to mp4
             "format": (
@@ -125,16 +125,19 @@ class DownloadQueue:
                     "preferedformat": "mp4",
                 },
             ],
-            # Embed metadata
             "writethumbnail": False,
+            # Use iOS client to bypass bot detection (often works without cookies)
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["ios", "web"],
+                },
+            },
             "http_headers": {
                 "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)"
                 ),
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
-                "Referer": "https://www.youtube.com/",
             },
             "socket_timeout": 30,
             "retries": 10,

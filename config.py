@@ -14,13 +14,20 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    telegram_bot_token: str = Field(default="", description="Telegram bot token from @BotFather")
-    download_dir: str = Field(default="downloads", description="Directory for temporary downloads")
+    telegram_bot_token: str = Field(
+        default="", description="Telegram bot token from @BotFather"
+    )
+    download_dir: str = Field(
+        default="downloads", description="Directory for temporary downloads"
+    )
     max_concurrent_downloads: int = Field(
         default=5, ge=1, le=20, description="Maximum concurrent download workers"
     )
     max_video_size_mb: int = Field(
-        default=50, ge=1, le=50, description="Maximum video size in MB (Telegram limit is 50MB)"
+        default=50,
+        ge=1,
+        le=50,
+        description="Maximum video size in MB (Telegram limit is 50MB)",
     )
     rate_limit_per_user: int = Field(
         default=10, ge=1, le=60, description="Maximum requests per user per minute"

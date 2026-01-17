@@ -103,10 +103,10 @@ class DownloadQueue:
                     task.estimated_size_mb = total / (1024 * 1024)
 
         ydl_opts: dict[str, Any] = {
-            # Prefer H.264 (avc1) for maximum compatibility with Telegram
-            # Falls back to best available and converts to mp4
+            # Download best quality with H.264 for Telegram compatibility
             "format": (
-                "bestvideo[vcodec^=avc1][ext=mp4]+bestaudio[ext=m4a]/"
+                "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/"
+                "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]/"
                 "bestvideo[vcodec^=avc1]+bestaudio/"
                 "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
                 "best[ext=mp4]/best"
@@ -127,17 +127,17 @@ class DownloadQueue:
             ],
             "writethumbnail": False,
             # Use multiple client fallbacks to bypass bot detection
+            # iOS and Android clients work best for Shorts
             "extractor_args": {
                 "youtube": {
-                    # Try these clients in order - web_creator and mweb often work
-                    "player_client": ["web_creator", "mweb", "tv_embedded"],
+                    "player_client": ["ios", "android", "web_creator", "mweb", "tv_embedded"],
                     "player_skip": ["webpage", "configs"],
                 },
             },
             "http_headers": {
                 "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
                 ),
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
@@ -150,7 +150,7 @@ class DownloadQueue:
             "extractor_retries": 5,
         }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type]
             logger.info(f"Starting download for: {task.url}")
             info = ydl.extract_info(task.url, download=True)
             filename = ydl.prepare_filename(info)

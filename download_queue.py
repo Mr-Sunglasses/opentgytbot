@@ -103,14 +103,23 @@ class DownloadQueue:
                     task.estimated_size_mb = total / (1024 * 1024)
 
         ydl_opts: dict[str, Any] = {
-            # Download best quality with H.264 for Telegram compatibility
+            # Download best quality video regardless of codec, then re-encode to H.264.
+            # Two separate dimension caps handle both orientations at 1080p quality:
+            #   height<=1080 → landscape videos  (e.g. 1920×1080)
+            #   width<=1080  → portrait Shorts   (e.g. 1080×1920)
+            # Using height<=1920 caused format_sort:res to pick 1440p (2560×1440)
+            # because 1440 < 1920, blowing out the expected 1080p output dimensions.
             "format": (
-                "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/"
-                "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]/"
-                "bestvideo[vcodec^=avc1]+bestaudio/"
-                "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
-                "best[ext=mp4]/best"
+                "bestvideo[height<=1080]+bestaudio[ext=m4a]/"  # Landscape 1080p + M4A
+                "bestvideo[width<=1080]+bestaudio[ext=m4a]/"  # Portrait 1080p + M4A
+                "bestvideo[height<=1080]+bestaudio/"  # Landscape 1080p + any audio
+                "bestvideo[width<=1080]+bestaudio/"  # Portrait 1080p + any audio
+                "bestvideo+bestaudio/"  # Best any orientation (fallback)
+                "best[ext=mp4]/best"  # Absolute fallback
             ),
+            # Rank candidates by quality before the format selector picks one:
+            # resolution → fps → video bitrate → audio bitrate (all descending).
+            "format_sort": ["res", "fps", "vbr", "abr"],
             "outtmpl": f"{DOWNLOAD_DIR}/%(title).100s.%(ext)s",
             "quiet": True,
             "no_warnings": True,
@@ -118,26 +127,51 @@ class DownloadQueue:
             "progress_hooks": [progress_hook],
             # Ensure output is always MP4
             "merge_output_format": "mp4",
-            # Post-process to ensure compatibility
+            # Post-process to ensure MP4 container
             "postprocessors": [
                 {
                     "key": "FFmpegVideoConvertor",
                     "preferedformat": "mp4",
                 },
             ],
+            # Force H.264/AAC encoding on every ffmpeg invocation (merger + convertor).
+            # This transcodes VP9/AV1 sources to H.264 so Telegram plays videos inline.
+            # CRF 23 + fast preset keeps quality high while keeping encoding time short
+            # (Shorts are ≤60 s, so the extra ~5-15 s is acceptable).
+            "postprocessor_args": {
+                "ffmpeg": [
+                    "-c:v",
+                    "libx264",
+                    "-crf",
+                    "23",
+                    "-preset",
+                    "fast",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    "128k",
+                    "-movflags",
+                    "+faststart",
+                ],
+            },
             "writethumbnail": False,
-            # Use multiple client fallbacks to bypass bot detection
-            # iOS and Android clients work best for Shorts
+            # Clients that work without GVS PO Tokens (as of yt-dlp 2026.x):
+            #   web_creator / tv_embedded  – DASH streams, reliable, no token needed
+            #   web_safari / android_vr    – full range 144p→2160p, no token needed
+            # Removed: ios, android, mweb — YouTube now requires GVS PO Tokens for
+            # these clients; without them every stream is silently skipped, leaving
+            # only a single 360p fallback and causing the "low quality" symptom.
+            # Removed: player_skip=["webpage","configs"] — it prevented yt-dlp from
+            # discovering the full adaptive format list, compounding the quality issue.
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["ios", "android", "web_creator", "mweb", "tv_embedded"],
-                    "player_skip": ["webpage", "configs"],
+                    "player_client": ["web_creator", "tv_embedded", "web_safari", "android_vr"],
                 },
             },
             "http_headers": {
                 "User-Agent": (
-                    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
-                    "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
                 ),
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",

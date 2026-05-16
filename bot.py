@@ -280,7 +280,7 @@ class TelegramBot:
                     friendly_error = get_friendly_error(str(e))
                     await status_msg.edit_text(f"❌ Error: {friendly_error}")
                 finally:
-                    self._cleanup_file(task.result_path)
+                    self.queue.cleanup_task_files(task)
                 break
 
             elif task.status == DownloadStatus.FAILED:

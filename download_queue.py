@@ -1,16 +1,23 @@
 import asyncio
 import json
 import os
+import shutil
 import subprocess
+import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 import yt_dlp  # type: ignore[import-untyped]
 
 from config import DOWNLOAD_DIR
 from logger import logger
+
+STALE_DOWNLOAD_AGE_SECONDS = 24 * 60 * 60
+TASK_DIR_PREFIX = "task-"
 
 
 class DownloadStatus(Enum):
@@ -34,6 +41,7 @@ class DownloadTask:
     video_width: Optional[int] = None
     video_height: Optional[int] = None
     estimated_size_mb: Optional[float] = None
+    work_dir: Optional[str] = None
     # Callback for progress updates
     progress_callback: Optional[Callable[[float, str], None]] = field(default=None, repr=False)
 
@@ -51,6 +59,7 @@ class DownloadQueue:
         logger.info(f"Added task to queue: {task.url} for user {task.user_id}")
 
     async def start(self) -> None:
+        self._cleanup_stale_downloads()
         self._workers = [asyncio.create_task(self._worker(i)) for i in range(self.max_concurrent)]
         logger.info(f"Started {self.max_concurrent} download workers")
 
@@ -88,6 +97,7 @@ class DownloadQueue:
                     task.error = str(e)
                     task.status = DownloadStatus.FAILED
                     logger.error(f"Worker {worker_id} failed: {task.url} - {e}")
+                    self.cleanup_task_files(task)
                 finally:
                     del self.active_downloads[task_id]
                     self.queue.task_done()
@@ -99,6 +109,10 @@ class DownloadQueue:
     def _download_video_sync(self, task: DownloadTask) -> dict[str, Any]:
         """Synchronous download function to run in executor."""
         os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+        task.work_dir = tempfile.mkdtemp(
+            prefix=f"{TASK_DIR_PREFIX}{task.user_id}-{task.message_id}-",
+            dir=DOWNLOAD_DIR,
+        )
 
         def progress_hook(d: dict[str, Any]) -> None:
             if d["status"] == "downloading":
@@ -126,7 +140,7 @@ class DownloadQueue:
             # Rank candidates by quality before the format selector picks one:
             # resolution → fps → video bitrate → audio bitrate (all descending).
             "format_sort": ["res", "fps", "vbr", "abr"],
-            "outtmpl": f"{DOWNLOAD_DIR}/%(title).100s.%(ext)s",
+            "outtmpl": os.path.join(task.work_dir, "%(title).100s [%(id)s].%(ext)s"),
             "quiet": True,
             "no_warnings": True,
             "noplaylist": True,
@@ -200,17 +214,7 @@ class DownloadQueue:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type]
             logger.info(f"Starting download for: {task.url}")
             info = ydl.extract_info(task.url, download=True)
-            filename = ydl.prepare_filename(info)
-
-            # Handle postprocessor changing extension to mp4
-            if not os.path.exists(filename):
-                # Try with .mp4 extension
-                base, _ = os.path.splitext(filename)
-                mp4_filename = f"{base}.mp4"
-                if os.path.exists(mp4_filename):
-                    filename = mp4_filename
-                else:
-                    raise ValueError(f"Downloaded file not found: {filename}")
+            filename = self._resolve_downloaded_file(ydl.prepare_filename(info), task.work_dir)
 
             if os.path.getsize(filename) == 0:
                 raise ValueError("Downloaded file is empty")
@@ -227,6 +231,30 @@ class DownloadQueue:
                 "width": width,
                 "height": height,
             }
+
+    def _resolve_downloaded_file(self, prepared_filename: str, work_dir: str) -> str:
+        """Find the final media file after yt-dlp post-processing."""
+        candidates = [prepared_filename]
+        base, _ = os.path.splitext(prepared_filename)
+        candidates.extend([f"{base}.mp4", f"{base}.mkv", f"{base}.webm"])
+
+        for filename in candidates:
+            if os.path.isfile(filename):
+                return filename
+
+        video_suffixes = {".mp4", ".mkv", ".mov", ".webm"}
+        media_files = [
+            path
+            for path in Path(work_dir).iterdir()
+            if path.is_file()
+            and not path.name.endswith(".part")
+            and path.suffix.lower() in video_suffixes
+            and path.stat().st_size > 0
+        ]
+        if media_files:
+            return str(max(media_files, key=lambda path: path.stat().st_mtime))
+
+        raise ValueError(f"Downloaded file not found in task directory: {work_dir}")
 
     def _probe_video_dimensions(self, file_path: str) -> tuple[Optional[int], Optional[int]]:
         """Read final encoded dimensions for Telegram video metadata."""
@@ -261,6 +289,56 @@ class DownloadQueue:
             logger.warning(f"Could not probe video dimensions for {file_path}: {e}")
 
         return None, None
+
+    def cleanup_task_files(self, task: DownloadTask) -> None:
+        """Remove a task's temporary directory or final file."""
+        if task.work_dir:
+            self._remove_task_dir(task.work_dir)
+            return
+
+        if task.result_path and os.path.exists(task.result_path):
+            try:
+                os.remove(task.result_path)
+                logger.info(f"Cleaned up file: {task.result_path}")
+            except Exception as e:
+                logger.error(f"Error cleaning up file {task.result_path}: {e}")
+
+    def _cleanup_stale_downloads(self) -> None:
+        """Remove old task directories left behind by previous process exits."""
+        download_root = Path(DOWNLOAD_DIR)
+        if not download_root.exists():
+            return
+
+        cutoff = time.time() - STALE_DOWNLOAD_AGE_SECONDS
+        for path in download_root.iterdir():
+            if not path.is_dir() or not path.name.startswith(TASK_DIR_PREFIX):
+                continue
+
+            try:
+                if path.stat().st_mtime < cutoff:
+                    self._remove_task_dir(str(path))
+            except Exception as e:
+                logger.warning(f"Could not inspect stale download directory {path}: {e}")
+
+    def _remove_task_dir(self, directory: str) -> None:
+        path = Path(directory)
+        download_root = Path(DOWNLOAD_DIR).resolve()
+
+        try:
+            resolved_path = path.resolve()
+            if (
+                resolved_path == download_root
+                or download_root not in resolved_path.parents
+                or not path.name.startswith(TASK_DIR_PREFIX)
+            ):
+                logger.warning(f"Refusing to clean unexpected download path: {directory}")
+                return
+
+            if path.exists():
+                shutil.rmtree(path)
+                logger.info(f"Cleaned up task directory: {directory}")
+        except Exception as e:
+            logger.error(f"Error cleaning up task directory {directory}: {e}")
 
     def get_queue_size(self) -> int:
         return self.queue.qsize()

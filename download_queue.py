@@ -1,5 +1,7 @@
 import asyncio
+import json
 import os
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
@@ -29,6 +31,8 @@ class DownloadTask:
     progress: float = 0.0
     video_title: Optional[str] = None
     video_duration: Optional[int] = None
+    video_width: Optional[int] = None
+    video_height: Optional[int] = None
     estimated_size_mb: Optional[float] = None
     # Callback for progress updates
     progress_callback: Optional[Callable[[float, str], None]] = field(default=None, repr=False)
@@ -76,6 +80,8 @@ class DownloadQueue:
                     task.result_path = result["path"]
                     task.video_title = result.get("title")
                     task.video_duration = result.get("duration")
+                    task.video_width = result.get("width")
+                    task.video_height = result.get("height")
                     task.status = DownloadStatus.COMPLETED
                     logger.info(f"Worker {worker_id} completed: {task.url}")
                 except Exception as e:
@@ -136,12 +142,19 @@ class DownloadQueue:
             ],
             # Force H.264/AAC encoding on every ffmpeg invocation (merger + convertor).
             # This transcodes VP9/AV1 sources to H.264 so Telegram plays videos inline.
+            # Preserve the source display aspect ratio exactly while normalizing to
+            # square pixels. This keeps Shorts portrait and landscape videos in the
+            # same shape YouTube provides instead of fitting them into a fixed box.
             # CRF 23 + fast preset keeps quality high while keeping encoding time short
             # (Shorts are ≤60 s, so the extra ~5-15 s is acceptable).
             "postprocessor_args": {
                 "ffmpeg": [
+                    "-vf",
+                    "scale=trunc((iw*sar)/2)*2:trunc(ih/2)*2,setsar=1",
                     "-c:v",
                     "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
                     "-crf",
                     "23",
                     "-preset",
@@ -203,6 +216,7 @@ class DownloadQueue:
                 raise ValueError("Downloaded file is empty")
 
             file_size_mb = os.path.getsize(filename) / (1024 * 1024)
+            width, height = self._probe_video_dimensions(filename)
             logger.info(f"Download complete: {filename} ({file_size_mb:.2f}MB)")
 
             return {
@@ -210,7 +224,43 @@ class DownloadQueue:
                 "title": info.get("title", "Unknown"),
                 "duration": info.get("duration"),
                 "uploader": info.get("uploader"),
+                "width": width,
+                "height": height,
             }
+
+    def _probe_video_dimensions(self, file_path: str) -> tuple[Optional[int], Optional[int]]:
+        """Read final encoded dimensions for Telegram video metadata."""
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=width,height",
+                    "-of",
+                    "json",
+                    file_path,
+                ],
+                capture_output=True,
+                check=True,
+                text=True,
+                timeout=15,
+            )
+            streams = json.loads(result.stdout).get("streams", [])
+            if not streams:
+                return None, None
+
+            width = streams[0].get("width")
+            height = streams[0].get("height")
+            if isinstance(width, int) and isinstance(height, int):
+                return width, height
+        except Exception as e:
+            logger.warning(f"Could not probe video dimensions for {file_path}: {e}")
+
+        return None, None
 
     def get_queue_size(self) -> int:
         return self.queue.qsize()

@@ -1,28 +1,35 @@
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1.7
+
+FROM python:3.11-slim AS runtime
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
-# Install uv and set PATH in same layer
-ENV PATH="/root/.local/bin:$PATH"
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    /root/.local/bin/uv --version
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
-# Copy dependency files
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    export DEBIAN_FRONTEND=noninteractive && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies
-RUN /root/.local/bin/uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
 
-# Copy application code
-COPY . .
+COPY main.py bot.py config.py download_queue.py logger.py ./
 
-# Create downloads directory
-RUN mkdir -p downloads
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev && \
+    mkdir -p downloads
 
-CMD ["/root/.local/bin/uv", "run", "python", "main.py"]
+CMD ["python", "main.py"]

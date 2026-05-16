@@ -1,4 +1,5 @@
 .env
+.docker-cache/
 .DS_Store
 downloads/
 *.pyc

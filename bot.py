@@ -320,6 +320,8 @@ class TelegramBot:
             await message.reply_video(
                 video=video,
                 caption=caption,
+                width=task.video_width,
+                height=task.video_height,
                 read_timeout=300,
                 write_timeout=300,
                 connect_timeout=300,

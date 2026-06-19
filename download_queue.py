@@ -13,7 +13,7 @@ from typing import Any, Callable, Optional
 
 import yt_dlp  # type: ignore[import-untyped]
 
-from config import DOWNLOAD_DIR
+from config import COOKIES_FILE, DOWNLOAD_DIR
 from logger import logger
 
 STALE_DOWNLOAD_AGE_SECONDS = 24 * 60 * 60
@@ -198,7 +198,7 @@ class DownloadQueue:
             "http_headers": {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                    "(KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36"
                 ),
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.5",
@@ -210,6 +210,10 @@ class DownloadQueue:
             "file_access_retries": 5,
             "extractor_retries": 5,
         }
+
+        if os.path.exists(COOKIES_FILE):
+            ydl_opts["cookiefile"] = COOKIES_FILE
+            logger.info(f"Using cookies from: {COOKIES_FILE}")
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[arg-type]
             logger.info(f"Starting download for: {task.url}")

@@ -44,7 +44,7 @@ def get_friendly_error(error: str) -> str:
     error_lower = error.lower()
 
     if "sign in" in error_lower or "bot" in error_lower or "cookies" in error_lower:
-        return "YouTube requires verification. Try a different video."
+        return "YouTube requires verification. Cookies might be needed or expired."
     if "private" in error_lower:
         return "This video is private."
     if "unavailable" in error_lower or "not available" in error_lower:

@@ -97,8 +97,18 @@ docker rm youtube-shorts-bot
 Due to Telegram's restrictions, files must be under 50MB to be sent.
 
 ### YouTube Bot Detection ⚠️
-YouTube aggressively blocks requests from cloud servers and data centers. If you encounter "Sign in to confirm you're not a bot" errors:
+YouTube aggressively blocks requests from cloud servers and data centers. If you encounter "Sign in to confirm you're not a bot" or "YouTube requires verification" errors:
 
+#### 1. Use Cookies (Recommended)
+Providing cookies from a logged-in YouTube account is the most reliable way to bypass detection.
+
+1. Install the [Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/ccmclabmjjnoobemgongeiclepgejclj) extension in your browser.
+2. Go to YouTube and log in.
+3. Use the extension to export cookies for YouTube as `cookies.txt`.
+4. Place the `cookies.txt` file in the bot's root directory.
+5. The bot will automatically detect and use it.
+
+#### 2. Environment Considerations
 | Environment | Works? | Notes |
 |-------------|--------|-------|
 | **Home server / Residential IP** | ✅ Yes | Recommended for self-hosting |

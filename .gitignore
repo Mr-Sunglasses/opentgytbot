@@ -10,3 +10,4 @@ __pycache__/
 .Python
 venv/
 .env.venv
+cookies.txt

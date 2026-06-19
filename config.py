@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     rate_limit_per_user: int = Field(
         default=10, ge=1, le=60, description="Maximum requests per user per minute"
     )
+    cookies_file: str = Field(
+        default="cookies.txt", description="Path to YouTube cookies file"
+    )
     log_level: str = Field(default="INFO", description="Logging level")
 
     @field_validator("log_level")
@@ -63,4 +66,5 @@ DOWNLOAD_DIR: Final = settings.download_dir
 MAX_CONCURRENT_DOWNLOADS: Final = settings.max_concurrent_downloads
 MAX_VIDEO_SIZE_MB: Final = settings.max_video_size_mb
 RATE_LIMIT_PER_USER: Final = settings.rate_limit_per_user
+COOKIES_FILE: Final = settings.cookies_file
 LOG_LEVEL: Final = settings.log_level

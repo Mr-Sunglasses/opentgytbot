@@ -123,7 +123,8 @@ class DownloadQueue:
                     task.estimated_size_mb = total / (1024 * 1024)
 
         ydl_opts: dict[str, Any] = {
-            # Download best quality video regardless of codec, then re-encode to H.264.
+            # Download best quality video regardless of codec; re-encoded to H.264
+            # afterwards only if the source isn't already Telegram-compatible.
             # Two separate dimension caps handle both orientations at 1080p quality:
             #   height<=1080 → landscape videos  (e.g. 1920×1080)
             #   width<=1080  → portrait Shorts   (e.g. 1080×1920)
@@ -145,54 +146,29 @@ class DownloadQueue:
             "no_warnings": True,
             "noplaylist": True,
             "progress_hooks": [progress_hook],
-            # Ensure output is always MP4
+            # Merge into MP4 with a plain stream copy (no forced re-encode here).
+            # We only transcode afterwards if the merged file actually needs it
+            # (see _transcode_to_h264) — most web_creator/web_safari formats are
+            # already H.264/AAC, so this skips a multi-minute encode in that case.
             "merge_output_format": "mp4",
-            # Post-process to ensure MP4 container
-            "postprocessors": [
-                {
-                    "key": "FFmpegVideoConvertor",
-                    "preferedformat": "mp4",
-                },
-            ],
-            # Force H.264/AAC encoding on every ffmpeg invocation (merger + convertor).
-            # This transcodes VP9/AV1 sources to H.264 so Telegram plays videos inline.
-            # Preserve the source display aspect ratio exactly while normalizing to
-            # square pixels. This keeps Shorts portrait and landscape videos in the
-            # same shape YouTube provides instead of fitting them into a fixed box.
-            # CRF 23 + fast preset keeps quality high while keeping encoding time short
-            # (Shorts are ≤60 s, so the extra ~5-15 s is acceptable).
-            "postprocessor_args": {
-                "ffmpeg": [
-                    "-vf",
-                    "scale=trunc((iw*sar)/2)*2:trunc(ih/2)*2,setsar=1",
-                    "-c:v",
-                    "libx264",
-                    "-pix_fmt",
-                    "yuv420p",
-                    "-crf",
-                    "23",
-                    "-preset",
-                    "fast",
-                    "-c:a",
-                    "aac",
-                    "-b:a",
-                    "128k",
-                    "-movflags",
-                    "+faststart",
-                ],
-            },
             "writethumbnail": False,
             # Clients that work without GVS PO Tokens (as of yt-dlp 2026.x):
-            #   web_creator / tv_embedded  – DASH streams, reliable, no token needed
-            #   web_safari / android_vr    – full range 144p→2160p, no token needed
+            #   web_creator – DASH streams, reliable, no token needed
+            #   web_safari  – full range 144p→2160p, no token needed
             # Removed: ios, android, mweb — YouTube now requires GVS PO Tokens for
             # these clients; without them every stream is silently skipped, leaving
             # only a single 360p fallback and causing the "low quality" symptom.
+            # Removed: tv_embedded (no longer supported by yt-dlp) and android_vr
+            # (skipped whenever cookies are set, which we always do now).
             # Removed: player_skip=["webpage","configs"] — it prevented yt-dlp from
             # discovering the full adaptive format list, compounding the quality issue.
+            # remote_components lets yt-dlp fetch its JS challenge-solver script
+            # (used together with the deno runtime baked into the image) to solve
+            # YouTube's nsig challenge; without it only image-only formats resolve.
+            "remote_components": ["ejs:github"],
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["web_creator", "tv_embedded", "web_safari", "android_vr"],
+                    "player_client": ["web_creator", "web_safari"],
                 },
             },
             "http_headers": {
@@ -222,6 +198,12 @@ class DownloadQueue:
 
             if os.path.getsize(filename) == 0:
                 raise ValueError("Downloaded file is empty")
+
+            if self._is_telegram_compatible(self._probe_streams(filename)):
+                logger.info(f"Source already H.264/AAC, skipping re-encode: {filename}")
+            else:
+                logger.info(f"Re-encoding to H.264/AAC: {filename}")
+                filename = self._transcode_to_h264(filename)
 
             file_size_mb = os.path.getsize(filename) / (1024 * 1024)
             width, height = self._probe_video_dimensions(filename)
@@ -293,6 +275,77 @@ class DownloadQueue:
             logger.warning(f"Could not probe video dimensions for {file_path}: {e}")
 
         return None, None
+
+    def _probe_streams(self, file_path: str) -> list[dict[str, Any]]:
+        """Read codec/SAR info for every stream, used to decide if a re-encode is needed."""
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "stream=codec_type,codec_name,sample_aspect_ratio",
+                    "-of",
+                    "json",
+                    file_path,
+                ],
+                capture_output=True,
+                check=True,
+                text=True,
+                timeout=15,
+            )
+            return json.loads(result.stdout).get("streams", [])
+        except Exception as e:
+            logger.warning(f"Could not probe streams for {file_path}: {e}")
+            return []
+
+    def _is_telegram_compatible(self, streams: list[dict[str, Any]]) -> bool:
+        """True if the file is already H.264/AAC with square pixels, so re-encoding
+        would be a no-op for compatibility and just burns CPU."""
+        vcodec = next((s.get("codec_name") for s in streams if s.get("codec_type") == "video"), None)
+        acodec = next((s.get("codec_name") for s in streams if s.get("codec_type") == "audio"), None)
+        sar = next((s.get("sample_aspect_ratio") for s in streams if s.get("codec_type") == "video"), None)
+        return vcodec == "h264" and acodec == "aac" and sar in (None, "1:1", "0:1")
+
+    def _transcode_to_h264(self, src_path: str) -> str:
+        """Re-encode to H.264/AAC for Telegram compatibility. Only called when the
+        source codec isn't already compatible (e.g. VP9/AV1 video or non-square SAR).
+        Uses 'veryfast' since this is the slow path and correctness, not max
+        compression, is the goal here.
+        """
+        base, _ = os.path.splitext(src_path)
+        out_path = f"{base}.h264.mp4"
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i",
+                src_path,
+                "-vf",
+                "scale=trunc((iw*sar)/2)*2:trunc(ih/2)*2,setsar=1",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-crf",
+                "23",
+                "-preset",
+                "veryfast",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-movflags",
+                "+faststart",
+                out_path,
+            ],
+            check=True,
+            capture_output=True,
+            timeout=600,
+        )
+        os.remove(src_path)
+        return out_path
 
     def cleanup_task_files(self, task: DownloadTask) -> None:
         """Remove a task's temporary directory or final file."""

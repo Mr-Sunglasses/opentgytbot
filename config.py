@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     cookies_file: str = Field(
         default="cookies.txt", description="Path to YouTube cookies file"
     )
+    admin_user_id: int = Field(
+        default=0, description="Telegram user ID allowed to update cookies (0 = disabled)"
+    )
     log_level: str = Field(default="INFO", description="Logging level")
 
     @field_validator("log_level")
@@ -67,4 +70,5 @@ MAX_CONCURRENT_DOWNLOADS: Final = settings.max_concurrent_downloads
 MAX_VIDEO_SIZE_MB: Final = settings.max_video_size_mb
 RATE_LIMIT_PER_USER: Final = settings.rate_limit_per_user
 COOKIES_FILE: Final = settings.cookies_file
+ADMIN_USER_ID: Final = settings.admin_user_id
 LOG_LEVEL: Final = settings.log_level

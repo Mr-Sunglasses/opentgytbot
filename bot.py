@@ -9,6 +9,8 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 from config import (
+    ADMIN_USER_ID,
+    COOKIES_FILE,
     DOWNLOAD_DIR,
     MAX_CONCURRENT_DOWNLOADS,
     MAX_VIDEO_SIZE_MB,
@@ -327,6 +329,56 @@ class TelegramBot:
                 connect_timeout=300,
             )
 
+    async def update_cookies_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.message:
+            return
+
+        user_id = update.effective_user.id if update.effective_user else 0
+
+        if ADMIN_USER_ID == 0 or user_id != ADMIN_USER_ID:
+            await update.message.reply_text("❌ You are not authorized to use this command.")
+            return
+
+        await update.message.reply_text(
+            "📎 Send your `cookies\\.txt` file as a document and I'll update it automatically\\.",
+            parse_mode=ParseMode.MARKDOWN_V2,
+        )
+
+    async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not update.message or not update.message.document:
+            return
+
+        user_id = update.effective_user.id if update.effective_user else 0
+
+        if ADMIN_USER_ID == 0 or user_id != ADMIN_USER_ID:
+            return
+
+        doc = update.message.document
+
+        if doc.file_size and doc.file_size > 1 * 1024 * 1024:
+            await update.message.reply_text("❌ File too large. cookies.txt should be under 1MB.")
+            return
+
+        try:
+            tg_file = await context.bot.get_file(doc.file_id)
+            cookie_bytes = await tg_file.download_as_bytearray()
+            content = cookie_bytes.decode("utf-8")
+
+            if "youtube.com" not in content or "Netscape HTTP Cookie File" not in content:
+                await update.message.reply_text(
+                    "❌ File doesn't look like a valid YouTube Netscape cookies file."
+                )
+                return
+
+            with open(COOKIES_FILE, "w", encoding="utf-8") as f:
+                f.write(content)
+
+            logger.info(f"cookies.txt updated by admin user {user_id}")
+            await update.message.reply_text("✅ cookies.txt updated successfully!")
+        except Exception as e:
+            logger.error(f"Failed to update cookies: {e}")
+            await update.message.reply_text(f"❌ Failed to update cookies: {e}")
+
     def _cleanup_file(self, file_path: str | None) -> None:
         if file_path and os.path.exists(file_path):
             try:
@@ -342,6 +394,8 @@ class TelegramBot:
         self.application.add_handler(CommandHandler("help", self.help_command))
         self.application.add_handler(CommandHandler("status", self.status))
         self.application.add_handler(CommandHandler("cancel", self.cancel))
+        self.application.add_handler(CommandHandler("updatecookies", self.update_cookies_command))
+        self.application.add_handler(MessageHandler(filters.Document.ALL, self.handle_document))
         self.application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_url)
         )

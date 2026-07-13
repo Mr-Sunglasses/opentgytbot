@@ -17,6 +17,9 @@ services:
       - type: bind
         source: ./downloads
         target: /app/downloads
+      - type: bind
+        source: ./cookies.txt
+        target: /app/cookies.txt
     logging:
       driver: json-file
       options:
